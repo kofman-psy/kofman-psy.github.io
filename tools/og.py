@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
-"""Картинка превью теста 1200×630 в стиле сайта: текст слева, фото в арке справа.
+r"""Картинка превью теста 1200×630 в стиле сайта: текст слева, фото в арке справа.
 
 Пример:
   python3 tools/og.py --out otnosheniya/og.jpg --photo otnosheniya/photo.jpg \
       --badge "12 вопросов · 3 минуты" --title "Почему мне|трудно|доверять?" \
       --subtitle "Тест о близости и отношениях"
 
---title: строки через «|», не больше трёх; кегль подбирается сам под ширину.
-Цвета по умолчанию — как у главной (светлый фон, терракотовый акцент); у теста
-со своей палитрой передай --bg --glow --accent --ink --muted --chip --line.
+--title: строки через «|», не больше трёх; выводятся ЗАГЛАВНЫМИ. Кегль подбирается под ширину
+(80 → 40); не влезает и на 40 — ошибка: разбей заголовок на строки иначе.
+--subtitle — короткий (до ~35 знаков); не влезает — ошибка, длинную фразу оставь для og:description.
+Цвета по умолчанию — как у главной (светлый фон, терракотовый акцент); у теста со своей
+палитрой передай свои (#rgb, #rrggbb, rgb(...), названия цветов).
 Сохраняет JPEG (--out *.jpg) — так превью весит < 300 КБ (WhatsApp больше не показывает).
 """
 import argparse
 import os
 import sys
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageColor, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 W, H = 1200, 630
 TEXT_X, TEXT_MAX_W = 70, 640
@@ -34,13 +36,15 @@ def font(paths, size):
     sys.exit('Нет шрифта с кириллицей: ' + ', '.join(paths))
 
 
-def rgb(h):
-    h = h.lstrip('#')
-    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+def rgb(c):
+    try:
+        return ImageColor.getrgb(c)[:3]
+    except ValueError:
+        sys.exit(f'Не понял цвет «{c}»: нужен #rrggbb, #rgb, rgb(...) или название')
 
 
 def arch(photo_path):
-    ph = Image.open(photo_path).convert('RGB')
+    ph = ImageOps.exif_transpose(Image.open(photo_path)).convert('RGB')  # фото с телефона бывает повёрнуто в EXIF
     scale = max(PHOTO_W / ph.width, PHOTO_H / ph.height)
     ph = ph.resize((round(ph.width * scale), round(ph.height * scale)), Image.LANCZOS)
     left = (ph.width - PHOTO_W) // 2
@@ -61,13 +65,13 @@ def main():
     a.add_argument('--title', required=True, help='строки через «|»')
     a.add_argument('--subtitle', default='')
     a.add_argument('--author', default='Анастасия Кофман · психология')
-    a.add_argument('--bg', default='#fbf5ed')
-    a.add_argument('--glow', default='#f5dfc6')
-    a.add_argument('--accent', default='#ba5220')
-    a.add_argument('--ink', default='#633e2b')
-    a.add_argument('--muted', default='#795a48')
-    a.add_argument('--chip', default='#f4e1ce')
-    a.add_argument('--line', default='#e7a06f')
+    a.add_argument('--bg', default='#fbf5ed', help='фон страницы (переменная --bg теста)')
+    a.add_argument('--glow', default='#f5dfc6', help='второй цвет фона/градиента — мягкое пятно справа сверху')
+    a.add_argument('--accent', default='#ba5220', help='акцент: заголовок и текст плашки')
+    a.add_argument('--ink', default='#633e2b', help='основной цвет текста: подзаголовок')
+    a.add_argument('--muted', default='#795a48', help='второстепенный текст: подпись автора')
+    a.add_argument('--chip', default='#f4e1ce', help='фон плашки; нет плашки в тесте — фон карточки или кнопки ответа')
+    a.add_argument('--line', default='#e7a06f', help='короткая линия под заголовком: приглушённый акцент или цвет рамки')
     o = a.parse_args()
 
     lines = [s.strip() for s in o.title.split('|') if s.strip()]
@@ -91,12 +95,13 @@ def main():
     d.rounded_rectangle((TEXT_X, 70, TEXT_X + bw + 40, 116), radius=23, fill=rgb(o.chip))
     d.text((TEXT_X + 20, 93), badge, font=fb, fill=rgb(o.accent), anchor='lm')
 
+    fits = lambda f: all(d.textlength(s.upper(), font=f) <= max_w for s in lines)
     size = 80
-    while size > 40:
-        ft = font(FONTS_BOLD, size)
-        if all(d.textlength(s.upper(), font=ft) <= max_w for s in lines):
-            break
+    while size > 40 and not fits(font(FONTS_BOLD, size)):
         size -= 2
+    ft = font(FONTS_BOLD, size)
+    if not fits(ft):
+        sys.exit('Заголовок не влезает даже кеглем 40 — разбей его на строки иначе (через «|»)')
     step = round(size * 1.12)
     y = 150 + (3 - len(lines)) * step // 2
     for s in lines:
@@ -107,9 +112,12 @@ def main():
         fs = 32
         while fs > 22 and d.textlength(o.subtitle, font=font(FONTS_REG, fs)) > max_w:
             fs -= 1
+        if d.textlength(o.subtitle, font=font(FONTS_REG, fs)) > max_w:
+            sys.exit('Подзаголовок не влезает — нужен короче (до ~35 знаков)')
         d.text((TEXT_X, y + 50), o.subtitle, font=font(FONTS_REG, fs), fill=rgb(o.ink))
     d.text((TEXT_X, y + 96), o.author, font=font(FONTS_REG, 26), fill=rgb(o.muted))
 
+    os.makedirs(os.path.dirname(o.out) or '.', exist_ok=True)
     if o.out.lower().endswith(('.jpg', '.jpeg')):
         img.save(o.out, quality=88, optimize=True, progressive=True)
     else:
