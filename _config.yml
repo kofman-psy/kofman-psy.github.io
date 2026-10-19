@@ -1,0 +1,8 @@
+# Настройка сборки сайта GitHub Pages (Jekyll).
+# Служебные файлы не публикуются на сайте — они видны только в репозитории.
+# Тесты (index.html без шапки Jekyll) копируются как есть.
+exclude:
+  - CLAUDE.md
+  - README.md
+  - tools
+  - inbox
